@@ -1,15 +1,71 @@
-# Python keshlari
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+. env/
+
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Virtual muhit
-venv/
-env/
-
-# Maxfiy ma'lumotlar
-.env
-
-# Yaratilgan vaqtinchalik fayllar
-*.pptx
+# Logs
 *.log
+logs/
+*.log.*
+
+# Environment variables
+.env
+.env.*
+*.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*\~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific
+presentations/
+temp_img_*.jpg
+temp_*.*
+*.pptx
+*.docx
+
+# Credentials
+token.txt
+config.py
+secrets.py
+
+# Database (agar bo'lsa)
+*.sqlite3
+*.db
+
+# Temporary files
+tmp/
+temp/
