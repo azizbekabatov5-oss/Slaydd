@@ -1,0 +1,15 @@
+# Python keshlari
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual muhit
+venv/
+env/
+
+# Maxfiy ma'lumotlar
+.env
+
+# Yaratilgan vaqtinchalik fayllar
+*.pptx
+*.log
