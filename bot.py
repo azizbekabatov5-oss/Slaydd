@@ -19,7 +19,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TOKEN = "SIZNING_TOKENINGIZ"  # @BotFather dan olingan
+# 🔑 TOKEN - Environment Variable dan olinadi
+# Render'da: Settings → Environment → Add Variable: BOT_TOKEN = sizning_tokeningiz
+TOKEN = os.environ.get("BOT_TOKEN")
+
+# Agar localda ishlatmoqchi bo'lsangiz, .env fayl yoki quyidagi qatorni oching:
+# TOKEN = os.environ.get("BOT_TOKEN", "SIZNING_TOKENINGIZ_BU_YERGA")
+
+if not TOKEN:
+    raise ValueError("❌ BOT_TOKEN topilmadi! Environment Variable sozlang.")
+
 DATA_FILE = "bot_data.json"
 
 # Conversation holatlari
@@ -119,14 +128,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("del_"):
         await delete_subject(query, user_id, data)
         return ConversationHandler.END
-    elif data.startswith("day_"):
-        day_idx = int(data.split("_")[1])
-        context.user_data["day"] = DAYS[day_idx]
-        await query.edit_message_text(
-            "🕐 *Dars vaqtini kiriting:*\nFormat: `HH:MM` (Masalan: 09:00)",
-            parse_mode="Markdown",
-        )
-        return ADD_TIME
 
 
 async def show_today(query, user_id):
@@ -246,6 +247,18 @@ async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     return ADD_DAY
+
+
+async def add_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    day_idx = int(query.data.split("_")[1])
+    context.user_data["day"] = DAYS[day_idx]
+    await query.edit_message_text(
+        "🕐 *Dars vaqtini kiriting:*\nFormat: `HH:MM` (Masalan: 09:00)",
+        parse_mode="Markdown",
+    )
+    return ADD_TIME
 
 
 async def add_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -388,7 +401,7 @@ def main():
         entry_points=[CallbackQueryHandler(button_handler, pattern="^add_subject$")],
         states={
             ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
-            ADD_DAY: [CallbackQueryHandler(button_handler, pattern="^day_")],
+            ADD_DAY: [CallbackQueryHandler(add_day, pattern="^day_")],
             ADD_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_time)],
             ADD_ROOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_room)],
             ADD_TEACHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_teacher)],
@@ -407,7 +420,6 @@ def main():
         fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Bekor qilindi!", reply_markup=get_main_keyboard()))],
     )
 
-    # Asosiy handlerlar
     application.add_handler(CommandHandler("start", start))
     application.add_handler(add_handler)
     application.add_handler(exam_handler)
