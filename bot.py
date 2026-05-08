@@ -9,8 +9,10 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
 
+# Sozlamalar
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -19,128 +21,126 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- MODELNI AVTOMATIK ANIQLASH ---
-WORKING_MODEL = None
-
-def initialize_gemini():
-    global WORKING_MODEL
-    if not GEMINI_KEY:
-        logging.error("GEMINI_API_KEY topilmadi!")
-        return
-
+# --- GEMINI MODELINI TO'G'RI SOZLASH ---
+def get_working_model():
     try:
         genai.configure(api_key=GEMINI_KEY)
-        # Mavjud modellarni tekshirish
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        logging.info(f"Mavjud modellar: {available_models}")
-
-        # Ustuvorlik bo'yicha modellar ro'yxati
-        priority_list = [
-            'models/gemini-1.5-flash', 
-            'models/gemini-1.5-pro', 
-            'models/gemini-pro',
-            'models/gemini-1.0-pro'
-        ]
-
-        for model_name in priority_list:
-            if model_name in available_models:
-                WORKING_MODEL = genai.GenerativeModel(model_name)
-                logging.info(f"Tanlangan model: {model_name}")
-                break
-        
-        if not WORKING_MODEL and available_models:
-            WORKING_MODEL = genai.GenerativeModel(available_models[0])
-            logging.info(f"Zaxira model tanlandi: {available_models[0]}")
-
-    except Exception as e:
-        logging.error(f"Gemini init xatosi: {e}")
-
-# Bot ishga tushganda modelni aniqlaymiz
-initialize_gemini()
-
-# --- AI MATN FUNKSIYASI ---
-async def get_ai_text(topic):
-    prompt = (
-        f"Mavzu: '{topic}'. 5 ta slayidli taqdimot rejasi tuz. "
-        "Format: 'Sarlavha | Matn | Rasm kalit so'zi'. Faqat o'zbek tilida."
-    )
-    
-    # 1. Gemini bilan urinish
-    if WORKING_MODEL:
-        try:
-            response = WORKING_MODEL.generate_content(prompt)
-            if response and response.text:
-                return response.text
-        except Exception as e:
-            logging.error(f"Gemini generatsiya xatosi: {e}")
-
-    # 2. Zaxira AI (Agar Gemini modellari topilmasa yoki 404 bersa)
-    try:
-        url = f"https://text.pollinations.ai/{prompt}?model=llama"
-        res = requests.get(url, timeout=20)
-        return res.text if res.status_code == 200 else None
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # Eng yaxshi modellarni tartib bilan tekshirish
+        for m_name in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']:
+            if m_name in models:
+                return genai.GenerativeModel(m_name)
+        return genai.GenerativeModel(models[0]) if models else None
     except:
         return None
 
-# --- RASM VA PPTX (O'ZGARISHSIZ QOLADI) ---
-def get_image(keyword):
-    url = f"https://image.pollinations.ai/prompt/professional%20{keyword.replace(' ', '%20')}?width=1024&height=768&nologo=true"
+model = get_working_model()
+
+# --- TOZA MATN YARATISH ---
+async def get_clean_content(topic):
+    prompt = (
+        f"Mavzu: '{topic}'. Ushbu mavzuda 5 slayidli professional taqdimot rejasi tuz. "
+        "Faqat o'zbek tilida javob ber. Har bir slaydni aynan quyidagi formatda yoz, "
+        "ortiqcha 'Mana reja' yoki 'Slayd 1' kabi so'zlarni ishlatma:\n"
+        "Sarlavha | Matn (qisqa 3 ta qator) | Rasm uchun inglizcha qisqa nom\n"
+        "Namuna:\nO'zbekiston turizmi | 1. Qadimiy shaharlar\n2. Milliy taomlar\n3. Mehmondoshlik | Samarkand Registan"
+    )
+    try:
+        if model:
+            response = model.generate_content(prompt)
+            return response.text
+        # Zaxira AI (Pollinations)
+        res = requests.get(f"https://text.pollinations.ai/{prompt}?model=llama")
+        return res.text
+    except:
+        return None
+
+# --- SIFATLI RASM OLISH ---
+def get_hq_image(keyword):
+    # Rasm sifatli chiqishi uchun promptni boyitish
+    query = f"professional high quality presentation slide image of {keyword}"
+    url = f"https://image.pollinations.ai/prompt/{query.replace(' ', '%20')}?width=1024&height=768&nologo=true"
     try:
         res = requests.get(url, timeout=20)
-        return io.BytesIO(res.content) if res.status_code == 200 else None
-    except: return None
+        if res.status_code == 200:
+            return io.BytesIO(res.content)
+    except:
+        return None
 
-def create_pptx(topic, ai_content, filename):
+# --- PPTX YARATISH (DIZAYN BILAN) ---
+def create_styled_pptx(topic, content, filename):
     prs = Presentation()
+    
+    # 1. Titul slayd (Chiroyli sarlavha)
     slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = topic.upper()
-    slide.placeholders[1].text = "AI Smart Auto-Model Version"
+    title = slide.shapes.title
+    title.text = topic.upper()
+    subtitle = slide.placeholders[1]
+    subtitle.text = "Sun'iy intellekt tomonidan tayyorlangan professional taqdimot"
 
-    lines = [l.strip() for l in ai_content.split('\n') if "|" in l]
-    if not lines: lines = ai_content.split('\n')[:5]
-
-    for line in lines:
+    lines = [l.strip() for l in content.split('\n') if "|" in l]
+    
+    for line in lines[:5]:
         try:
             parts = line.split("|")
+            s_title = parts[0].strip()
+            s_text = parts[1].strip()
+            s_img = parts[2].strip() if len(parts) > 2 else s_title
+
+            # Slayd yaratish (Layout 1: Title and Content)
             slide = prs.slides.add_slide(prs.slide_layouts[1])
-            slide.shapes.title.text = parts[0].strip()
-            slide.placeholders[1].text = parts[1].strip() if len(parts) > 1 else ""
             
-            img_key = parts[2].strip() if len(parts) > 2 else parts[0].strip()
-            img_data = get_image(img_key)
-            if img_data:
-                slide.shapes.add_picture(img_data, Inches(5.5), Inches(1.5), width=Inches(4))
-        except: continue
+            # Sarlavha stili
+            title_shape = slide.shapes.title
+            title_shape.text = s_title
+            
+            # Matn stili
+            body_shape = slide.placeholders[1]
+            tf = body_shape.text_frame
+            tf.text = s_text
+            
+            # RASM JOYLASH (O'ng tomonga, aniq o'lchamda)
+            img_stream = get_hq_image(s_img)
+            if img_stream:
+                # Inches(5.5) - chapdan, Inches(1.2) - tepadan, Inches(4) - eni
+                slide.shapes.add_picture(img_stream, Inches(5.2), Inches(1.5), width=Inches(4.5))
+        except:
+            continue
+
     prs.save(filename)
 
-# --- HANDLERLAR ---
+# --- BOT INTERFEYSI ---
 @dp.message(Command("start"))
 async def start(m: types.Message):
-    model_name = WORKING_MODEL.model_name if WORKING_MODEL else "Llama (Backup)"
-    await m.answer(f"Salom! Bot ishlamoqda.\nTanlangan AI: {model_name}\nMavzuni yuboring:")
+    await m.answer(f"Assalomu alaykum {m.from_user.first_name}!\nMen sizga **toza o'zbek tilida** va **rasmlar bilan** professional taqdimot yaratib beraman.\n\nMavzuni yuboring:")
 
 @dp.message(F.text)
-async def handle(m: types.Message):
+async def handle_request(m: types.Message):
     topic = m.text
-    status = await m.answer("⏳ AI tayyorlanmoqda...")
-    ai_text = await get_ai_text(topic)
+    status = await m.answer("⏳ **Matn va rasmlar tayyorlanmoqda...**\n(Bu 15-20 soniya vaqt olishi mumkin)")
     
-    if not ai_text:
-        await status.edit_text("❌ Xatolik yuz berdi.")
+    ai_content = await get_clean_content(topic)
+    if not ai_content:
+        await status.edit_text("❌ Xatolik: AI matn yarata olmadi.")
         return
 
-    fname = f"p_{m.from_user.id}.pptx"
+    file_name = f"pres_{m.from_user.id}.pptx"
     try:
-        create_pptx(topic, ai_text, fname)
-        await m.answer_document(FSInputFile(fname), caption=f"✅ {topic}")
+        create_styled_pptx(topic, ai_content, file_name)
+        
+        await m.answer_document(
+            FSInputFile(file_name), 
+            caption=f"✅ **Taqdimot tayyor!**\n\nMavzu: {topic}\nModel: {model.model_name if model else 'Llama'}"
+        )
     except Exception as e:
-        await m.answer(f"⚠️ Xato: {e}")
+        await m.answer(f"⚠️ Xato: {str(e)}")
     finally:
-        if os.path.exists(fname): os.remove(fname)
+        if os.path.exists(file_name):
+            os.remove(file_name)
         await status.delete()
 
 async def main():
-    # TelegramConflictError oldini olish uchun avvalgi webhook/update larni o'chiramiz
+    # Eski so'rovlarni tozalash (ConflictError oldini olish uchun)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
