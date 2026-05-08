@@ -3,7 +3,6 @@ import asyncio
 import requests
 import io
 import logging
-import google.generativeai as genai
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -11,113 +10,124 @@ from aiogram.types import FSInputFile
 from pptx import Presentation
 from pptx.util import Inches
 
-# .env faylidan kalitlarni yuklash
+# .env yuklash
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-# Gemini-ni sozlash
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Dinamik import (Agar kutubxona bo'lmasa, xato bermasligi uchun)
+HAS_GEMINI = False
+try:
+    import google.generativeai as genai
+    if GEMINI_KEY:
+        genai.configure(api_key=GEMINI_KEY)
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+        HAS_GEMINI = True
+except Exception as e:
+    logging.error(f"Gemini kutubxonasi yoki sozlamasida xato: {e}")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- GEMINI MATN YARATISH ---
-async def get_gemini_text(topic):
+# --- MOSLASHUVCHAN AI FUNKSIYASI ---
+async def get_ai_text(topic):
     prompt = (
-        f"Mavzu: '{topic}'. Professional 5 slayidli taqdimot rejasi tuz. "
-        "Har bir slayd uchun quyidagi formatda javob ber:\n"
-        "Slayd sarlavhasi | Slayd matni (3 ta asosiy nuqta) | Rasm uchun inglizcha qisqa kalit so'z\n"
-        "Faqat shu formatda bo'lsin, ortiqcha gap yozma."
+        f"Mavzu: '{topic}'. 5 slayidli taqdimot rejasi tuz. "
+        "Format: 'Sarlavha | Matn | Rasm kalit so'zi'. Faqat o'zbek tilida."
     )
+    
+    # 1-yo'l: Gemini (agar kutubxona va key bo'lsa)
+    if HAS_GEMINI:
+        try:
+            response = gemini_model.generate_content(prompt)
+            if response and response.text:
+                logging.info("Gemini AI orqali matn olindi.")
+                return response.text
+        except Exception as e:
+            logging.error(f"Gemini ishlamadi, zaxiraga o'tilmoqda: {e}")
+
+    # 2-yo'l: Zaxira AI (Hech qanday kutubxona va kalit talab qilmaydi)
     try:
-        # Generatsiya qilish
-        response = model.generate_content(prompt)
-        return response.text
+        url = f"https://text.pollinations.ai/{prompt}?model=llama"
+        res = requests.get(url, timeout=30)
+        if res.status_code == 200:
+            logging.info("Fallback (Llama) AI orqali matn olindi.")
+            return res.text
     except Exception as e:
-        logging.error(f"Gemini xatosi: {e}")
+        logging.error(f"Zaxira AI ham ishlamadi: {e}")
         return None
 
-# --- AI RASM YARATISH ---
+# --- RASM FUNKSIYASI ---
 def get_ai_image(keyword):
-    url = f"https://image.pollinations.ai/prompt/professional%20presentation%20slide%20{keyword.replace(' ', '%20')}?width=1024&height=768&nologo=true"
+    url = f"https://image.pollinations.ai/prompt/professional%20{keyword.replace(' ', '%20')}?width=1024&height=768&nologo=true"
     try:
         res = requests.get(url, timeout=20)
-        if res.status_code == 200:
-            return io.BytesIO(res.content)
+        return io.BytesIO(res.content) if res.status_code == 200 else None
     except:
         return None
 
-# --- TAQDIMOTNI YIG'ISH (PPTX) ---
+# --- PPTX YARATISH (BARQAROR) ---
 def create_pptx(topic, ai_content, filename):
     prs = Presentation()
-    
-    # 1. Titul slaydi
+    # Titul
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     slide.shapes.title.text = topic.upper()
-    slide.placeholders[1].text = "Gemini AI tomonidan tayyorlandi\nTelegram Bot: @SizningBot"
+    slide.placeholders[1].text = "AI Presentation Bot\nRailway Serverda tayyorlandi"
 
-    # Gemini matnini qatorlarga bo'lish
-    lines = [l for l in ai_content.split('\n') if "|" in l]
-    
-    for line in lines[:5]:
+    # Matnni qayta ishlash (har qanday formatga moslashuvchan)
+    lines = [l.strip() for l in ai_content.split('\n') if "|" in l or ":" in l]
+    if not lines: lines = ai_content.split('\n')[:5]
+
+    for line in lines:
         try:
-            parts = line.split("|")
-            # Indexerror dan himoya
-            title = parts[0].strip() if len(parts) > 0 else "Ma'lumot"
-            text = parts[1].strip() if len(parts) > 1 else ""
+            # Bo'lish usuli: | yoki : yoki -
+            sep = "|" if "|" in line else (":" if ":" in line else "-")
+            parts = line.split(sep)
+            
+            title = parts[0].strip()[:50] # Sarlavha juda uzun bo'lmasligi uchun
+            text = parts[1].strip() if len(parts) > 1 else "Batafsil ma'lumot kiritilmagan."
             img_key = parts[2].strip() if len(parts) > 2 else title
 
-            # Yangi slayd
             slide = prs.slides.add_slide(prs.slide_layouts[1])
             slide.shapes.title.text = title
             slide.placeholders[1].text = text
             
-            # Rasmni slayidga qo'shish
             img_data = get_ai_image(img_key)
             if img_data:
-                # O'ng tomonga joylashtirish
-                slide.shapes.add_picture(img_data, Inches(5.5), Inches(1.5), width=Inches(4))
-        except Exception as e:
-            logging.error(f"Slayd xatosi: {e}")
+                slide.shapes.add_picture(img_data, Inches(5.4), Inches(1.4), width=Inches(4.2))
+        except:
             continue
-            
     prs.save(filename)
 
-# --- BOT FUNKSIYALARI ---
+# --- HANDLERLAR ---
 @dp.message(Command("start"))
-async def start_handler(message: types.Message):
-    await message.answer(f"Salom {message.from_user.first_name}! 👋\nMen **Gemini AI** yordamida professional taqdimotlar yarataman.\n\nMavzuni yuboring:")
+async def start(m: types.Message):
+    mode = "Gemini + Llama" if HAS_GEMINI else "Llama (Universal)"
+    await m.answer(f"Salom! Men tayyorman. \nIshlash tartibi: {mode}\nMavzuni yuboring:")
 
 @dp.message(F.text)
-async def topic_handler(message: types.Message):
-    topic = message.text
-    msg = await message.answer("🧠 Gemini o'ylamoqda...")
+async def handle(m: types.Message):
+    topic = m.text
+    status = await m.answer("⏳ AI ma'lumot to'plamoqda...")
     
-    # Gemini-dan matn olish
-    ai_text = await get_gemini_text(topic)
-    
+    ai_text = await get_ai_text(topic)
     if not ai_text:
-        await msg.edit_text("❌ Gemini xatosi yoki API kalitda muammo bor.")
+        await status.edit_text("❌ AI ulanishda xato. Keyinroq urinib ko'ring.")
         return
 
-    await msg.edit_text("🖼 Rasmlar chizilmoqda...")
-    file_name = f"pres_{message.from_user.id}.pptx"
+    await status.edit_text("🖼 Slaydlar yig'ilmoqda...")
+    fname = f"file_{m.from_user.id}.pptx"
     
     try:
-        create_pptx(topic, ai_text, file_name)
-        
-        # Faylni yuborish
-        document = FSInputFile(file_name)
-        await message.answer_document(document, caption=f"✅ '{topic}' mavzusida taqdimot tayyor!")
+        # Loop ichida ishlash uchun create_pptx ni executorga beramiz (ixtiyoriy)
+        create_pptx(topic, ai_text, fname)
+        await m.answer_document(FSInputFile(fname), caption=f"✅ {topic}")
     except Exception as e:
-        await message.answer(f"⚠️ Xatolik: {e}")
+        await m.answer(f"⚠️ Xatolik: {e}")
     finally:
-        if os.path.exists(file_name):
-            os.remove(file_name)
-        await msg.delete()
+        if os.path.exists(fname): os.remove(fname)
+        await status.delete()
 
 async def main():
     await dp.start_polling(bot)
