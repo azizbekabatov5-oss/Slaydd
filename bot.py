@@ -20,12 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 🔑 TOKEN - Environment Variable dan olinadi
-# Render'da: Settings → Environment → Add Variable: BOT_TOKEN = sizning_tokeningiz
 TOKEN = os.environ.get("BOT_TOKEN")
-
-# Agar localda ishlatmoqchi bo'lsangiz, .env fayl yoki quyidagi qatorni oching:
-# TOKEN = os.environ.get("BOT_TOKEN", "SIZNING_TOKENINGIZ_BU_YERGA")
-
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN topilmadi! Environment Variable sozlang.")
 
@@ -77,7 +72,7 @@ def get_main_keyboard():
     ])
 
 
-# ========== START ==========
+# ========== ASOSIY MENYU ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = (
@@ -93,44 +88,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
-# ========== CALLBACK HANDLER ==========
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== TUGMALAR HANDLERI (CONVERSATION TASHQARIDA) ==========
+async def today_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
-    data = query.data
-
-    if data == "today":
-        await show_today(query, user_id)
-    elif data == "week":
-        await show_week(query, user_id)
-    elif data == "add_subject":
-        await query.edit_message_text(
-            "✏️ *Dars nomini kiriting:*\n(Masalan: Matematika analizi)",
-            parse_mode="Markdown",
-        )
-        return ADD_NAME
-    elif data == "del_subject":
-        await show_delete_menu(query, user_id)
-        return "DEL"
-    elif data == "exams":
-        await show_exams(query, user_id)
-    elif data == "add_exam":
-        await query.edit_message_text(
-            "📝 *Imtihon nomini kiriting:*",
-            parse_mode="Markdown",
-        )
-        return ADD_EXAM_NAME
-    elif data == "reminders":
-        await toggle_reminders(query, user_id)
-    elif data == "back":
-        await query.edit_message_text("Quyidagi menyudan tanlang 👇", reply_markup=get_main_keyboard())
-    elif data.startswith("del_"):
-        await delete_subject(query, user_id, data)
-        return ConversationHandler.END
-
-
-async def show_today(query, user_id):
     user_data = get_user_data(user_id)
     today = DAYS[datetime.now().weekday()]
     subjects = [s for s in user_data["subjects"] if s["day"] == today]
@@ -146,7 +108,10 @@ async def show_today(query, user_id):
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
-async def show_week(query, user_id):
+async def week_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
     user_data = get_user_data(user_id)
     subjects = user_data["subjects"]
 
@@ -170,8 +135,12 @@ async def show_week(query, user_id):
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
-async def show_delete_menu(query, user_id):
+async def del_subject_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
     user_data = get_user_data(user_id)
+
     if not user_data["subjects"]:
         await query.edit_message_text("❌ O'chirish uchun dars yo'q!", reply_markup=get_main_keyboard())
         return
@@ -189,9 +158,13 @@ async def show_delete_menu(query, user_id):
     )
 
 
-async def delete_subject(query, user_id, data):
-    idx = int(data.split("_")[1])
+async def delete_subject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    idx = int(query.data.split("_")[1])
     user_data = get_user_data(user_id)
+
     if 0 <= idx < len(user_data["subjects"]):
         deleted = user_data["subjects"].pop(idx)
         update_user_data(user_id, user_data)
@@ -202,7 +175,10 @@ async def delete_subject(query, user_id, data):
         )
 
 
-async def show_exams(query, user_id):
+async def exams_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
     user_data = get_user_data(user_id)
     exams = user_data.get("exams", [])
 
@@ -225,7 +201,10 @@ async def show_exams(query, user_id):
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def toggle_reminders(query, user_id):
+async def reminders_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
     user_data = get_user_data(user_id)
     user_data["reminders"] = not user_data.get("reminders", True)
     update_user_data(user_id, user_data)
@@ -237,7 +216,23 @@ async def toggle_reminders(query, user_id):
     )
 
 
+async def back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Quyidagi menyudan tanlang 👇", reply_markup=get_main_keyboard())
+
+
 # ========== CONVERSATION: DARS QO'SHISH ==========
+async def add_subject_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "✏️ *Dars nomini kiriting:*\n(Masalan: Matematika analizi)",
+        parse_mode="Markdown",
+    )
+    return ADD_NAME
+
+
 async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = update.message.text
     keyboard = [[InlineKeyboardButton(day, callback_data=f"day_{i}")] for i, day in enumerate(DAYS)]
@@ -304,6 +299,16 @@ async def add_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ========== CONVERSATION: IMTIHON QO'SHISH ==========
+async def add_exam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "📝 *Imtihon nomini kiriting:*",
+        parse_mode="Markdown",
+    )
+    return ADD_EXAM_NAME
+
+
 async def add_exam_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["exam_name"] = update.message.text
     await update.message.reply_text(
@@ -396,9 +401,18 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(TOKEN).build()
 
-    # Dars qo'shish
-    add_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler, pattern="^add_subject$")],
+    # 1. Oddiy tugmalar (CONVERSION TASHQARIDA)
+    application.add_handler(CallbackQueryHandler(today_callback, pattern="^today$"))
+    application.add_handler(CallbackQueryHandler(week_callback, pattern="^week$"))
+    application.add_handler(CallbackQueryHandler(del_subject_menu, pattern="^del_subject$"))
+    application.add_handler(CallbackQueryHandler(delete_subject_callback, pattern="^del_\\d+$"))
+    application.add_handler(CallbackQueryHandler(exams_callback, pattern="^exams$"))
+    application.add_handler(CallbackQueryHandler(reminders_callback, pattern="^reminders$"))
+    application.add_handler(CallbackQueryHandler(back_callback, pattern="^back$"))
+
+    # 2. Conversation handlerlar (oddiy handlerlardan KEYIN)
+    add_subject_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_subject_start, pattern="^add_subject$")],
         states={
             ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
             ADD_DAY: [CallbackQueryHandler(add_day, pattern="^day_")],
@@ -409,9 +423,8 @@ def main():
         fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Bekor qilindi!", reply_markup=get_main_keyboard()))],
     )
 
-    # Imtihon qo'shish
-    exam_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler, pattern="^add_exam$")],
+    add_exam_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_exam_start, pattern="^add_exam$")],
         states={
             ADD_EXAM_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_exam_name)],
             ADD_EXAM_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_exam_date)],
@@ -420,12 +433,13 @@ def main():
         fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Bekor qilindi!", reply_markup=get_main_keyboard()))],
     )
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(add_handler)
-    application.add_handler(exam_handler)
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(today|week|del_subject|exams|reminders|back|del_\\d+)$"))
+    application.add_handler(add_subject_conv)
+    application.add_handler(add_exam_conv)
 
-    # Eslatma (har daqiqa)
+    # 3. Start komandasi (ENG OXIRIDA)
+    application.add_handler(CommandHandler("start", start))
+
+    # 4. Eslatma
     application.job_queue.run_repeating(check_reminders, interval=60, first=10)
 
     application.run_polling()
