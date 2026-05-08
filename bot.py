@@ -1,148 +1,423 @@
-import os
-import asyncio
-import requests
-import io
 import logging
-import google.generativeai as genai
-from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.types import FSInputFile
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
+import json
+import os
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-# Sozlamalar
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+# ========== SOZLASH ==========
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+TOKEN = "SIZNING_TOKENINGIZ"  # @BotFather dan olingan
+DATA_FILE = "bot_data.json"
 
-# --- GEMINI MODELINI TO'G'RI SOZLASH ---
-def get_working_model():
-    try:
-        genai.configure(api_key=GEMINI_KEY)
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # Eng yaxshi modellarni tartib bilan tekshirish
-        for m_name in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']:
-            if m_name in models:
-                return genai.GenerativeModel(m_name)
-        return genai.GenerativeModel(models[0]) if models else None
-    except:
-        return None
+# Conversation holatlari
+ADD_NAME, ADD_DAY, ADD_TIME, ADD_ROOM, ADD_TEACHER = range(5)
+ADD_EXAM_NAME, ADD_EXAM_DATE, ADD_EXAM_TIME = range(5, 8)
 
-model = get_working_model()
+DAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
 
-# --- TOZA MATN YARATISH ---
-async def get_clean_content(topic):
-    prompt = (
-        f"Mavzu: '{topic}'. Ushbu mavzuda 5 slayidli professional taqdimot rejasi tuz. "
-        "Faqat o'zbek tilida javob ber. Har bir slaydni aynan quyidagi formatda yoz, "
-        "ortiqcha 'Mana reja' yoki 'Slayd 1' kabi so'zlarni ishlatma:\n"
-        "Sarlavha | Matn (qisqa 3 ta qator) | Rasm uchun inglizcha qisqa nom\n"
-        "Namuna:\nO'zbekiston turizmi | 1. Qadimiy shaharlar\n2. Milliy taomlar\n3. Mehmondoshlik | Samarkand Registan"
+
+# ========== YORDAMCHI FUNKSIYALAR ==========
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def get_user_data(user_id):
+    data = load_data()
+    uid = str(user_id)
+    if uid not in data:
+        data[uid] = {"subjects": [], "exams": [], "reminders": True}
+        save_data(data)
+    return data[uid]
+
+
+def update_user_data(user_id, user_data):
+    data = load_data()
+    data[str(user_id)] = user_data
+    save_data(data)
+
+
+def get_main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Bugungi darslar", callback_data="today")],
+        [InlineKeyboardButton("📚 Haftalik jadval", callback_data="week")],
+        [InlineKeyboardButton("➕ Dars qo'shish", callback_data="add_subject")],
+        [InlineKeyboardButton("🗑️ Dars o'chirish", callback_data="del_subject")],
+        [InlineKeyboardButton("📖 Imtihonlar", callback_data="exams")],
+        [InlineKeyboardButton("🔔 Eslatmalar", callback_data="reminders")],
+    ])
+
+
+# ========== START ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = (
+        f"👋 Salom, {user.first_name}!\n\n"
+        f"📚 *Talaba yordamchi botiga* xush kelibsiz!\n\n"
+        f"Bu bot yordamida:\n"
+        f"• 📅 Dars jadvalingizni ko'rish\n"
+        f"• ➕ Yangi darslar qo'shish\n"
+        f"• 🔔 Dars eslatmalarini olish\n"
+        f"• 📖 Imtihon sanalarini kuzatish\n\n"
+        f"Quyidagi menyudan tanlang 👇"
     )
-    try:
-        if model:
-            response = model.generate_content(prompt)
-            return response.text
-        # Zaxira AI (Pollinations)
-        res = requests.get(f"https://text.pollinations.ai/{prompt}?model=llama")
-        return res.text
-    except:
-        return None
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-# --- SIFATLI RASM OLISH ---
-def get_hq_image(keyword):
-    # Rasm sifatli chiqishi uchun promptni boyitish
-    query = f"professional high quality presentation slide image of {keyword}"
-    url = f"https://image.pollinations.ai/prompt/{query.replace(' ', '%20')}?width=1024&height=768&nologo=true"
-    try:
-        res = requests.get(url, timeout=20)
-        if res.status_code == 200:
-            return io.BytesIO(res.content)
-    except:
-        return None
 
-# --- PPTX YARATISH (DIZAYN BILAN) ---
-def create_styled_pptx(topic, content, filename):
-    prs = Presentation()
-    
-    # 1. Titul slayd (Chiroyli sarlavha)
-    slide = prs.slides.add_slide(prs.slide_layouts[0])
-    title = slide.shapes.title
-    title.text = topic.upper()
-    subtitle = slide.placeholders[1]
-    subtitle.text = "Sun'iy intellekt tomonidan tayyorlangan professional taqdimot"
+# ========== CALLBACK HANDLER ==========
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data = query.data
 
-    lines = [l.strip() for l in content.split('\n') if "|" in l]
-    
-    for line in lines[:5]:
-        try:
-            parts = line.split("|")
-            s_title = parts[0].strip()
-            s_text = parts[1].strip()
-            s_img = parts[2].strip() if len(parts) > 2 else s_title
+    if data == "today":
+        await show_today(query, user_id)
+    elif data == "week":
+        await show_week(query, user_id)
+    elif data == "add_subject":
+        await query.edit_message_text(
+            "✏️ *Dars nomini kiriting:*\n(Masalan: Matematika analizi)",
+            parse_mode="Markdown",
+        )
+        return ADD_NAME
+    elif data == "del_subject":
+        await show_delete_menu(query, user_id)
+        return "DEL"
+    elif data == "exams":
+        await show_exams(query, user_id)
+    elif data == "add_exam":
+        await query.edit_message_text(
+            "📝 *Imtihon nomini kiriting:*",
+            parse_mode="Markdown",
+        )
+        return ADD_EXAM_NAME
+    elif data == "reminders":
+        await toggle_reminders(query, user_id)
+    elif data == "back":
+        await query.edit_message_text("Quyidagi menyudan tanlang 👇", reply_markup=get_main_keyboard())
+    elif data.startswith("del_"):
+        await delete_subject(query, user_id, data)
+        return ConversationHandler.END
+    elif data.startswith("day_"):
+        day_idx = int(data.split("_")[1])
+        context.user_data["day"] = DAYS[day_idx]
+        await query.edit_message_text(
+            "🕐 *Dars vaqtini kiriting:*\nFormat: `HH:MM` (Masalan: 09:00)",
+            parse_mode="Markdown",
+        )
+        return ADD_TIME
 
-            # Slayd yaratish (Layout 1: Title and Content)
-            slide = prs.slides.add_slide(prs.slide_layouts[1])
-            
-            # Sarlavha stili
-            title_shape = slide.shapes.title
-            title_shape.text = s_title
-            
-            # Matn stili
-            body_shape = slide.placeholders[1]
-            tf = body_shape.text_frame
-            tf.text = s_text
-            
-            # RASM JOYLASH (O'ng tomonga, aniq o'lchamda)
-            img_stream = get_hq_image(s_img)
-            if img_stream:
-                # Inches(5.5) - chapdan, Inches(1.2) - tepadan, Inches(4) - eni
-                slide.shapes.add_picture(img_stream, Inches(5.2), Inches(1.5), width=Inches(4.5))
-        except:
-            continue
 
-    prs.save(filename)
+async def show_today(query, user_id):
+    user_data = get_user_data(user_id)
+    today = DAYS[datetime.now().weekday()]
+    subjects = [s for s in user_data["subjects"] if s["day"] == today]
+    subjects.sort(key=lambda x: x["time"])
 
-# --- BOT INTERFEYSI ---
-@dp.message(Command("start"))
-async def start(m: types.Message):
-    await m.answer(f"Assalomu alaykum {m.from_user.first_name}!\nMen sizga **toza o'zbek tilida** va **rasmlar bilan** professional taqdimot yaratib beraman.\n\nMavzuni yuboring:")
+    if not subjects:
+        text = f"📅 *{today}*\n\n❌ Bugun dars yo'q! 🎉"
+    else:
+        text = f"📅 *{today}*\n{'═' * 20}\n\n"
+        for i, s in enumerate(subjects, 1):
+            text += f"🔹 *{i}. {s['name']}*\n🕐 {s['time']} | 🏫 {s['room']} | 👤 {s['teacher']}\n\n"
 
-@dp.message(F.text)
-async def handle_request(m: types.Message):
-    topic = m.text
-    status = await m.answer("⏳ **Matn va rasmlar tayyorlanmoqda...**\n(Bu 15-20 soniya vaqt olishi mumkin)")
-    
-    ai_content = await get_clean_content(topic)
-    if not ai_content:
-        await status.edit_text("❌ Xatolik: AI matn yarata olmadi.")
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+
+async def show_week(query, user_id):
+    user_data = get_user_data(user_id)
+    subjects = user_data["subjects"]
+
+    if not subjects:
+        await query.edit_message_text("❌ Hali dars qo'shilmagan!", reply_markup=get_main_keyboard())
         return
 
-    file_name = f"pres_{m.from_user.id}.pptx"
-    try:
-        create_styled_pptx(topic, ai_content, file_name)
-        
-        await m.answer_document(
-            FSInputFile(file_name), 
-            caption=f"✅ **Taqdimot tayyor!**\n\nMavzu: {topic}\nModel: {model.model_name if model else 'Llama'}"
-        )
-    except Exception as e:
-        await m.answer(f"⚠️ Xato: {str(e)}")
-    finally:
-        if os.path.exists(file_name):
-            os.remove(file_name)
-        await status.delete()
+    text = "📚 *HAFTALIK JADVAL*\n{'═' * 25}\n\n"
+    schedule = {day: [] for day in DAYS}
+    for s in subjects:
+        schedule[s["day"]].append(s)
 
-async def main():
-    # Eski so'rovlarni tozalash (ConflictError oldini olish uchun)
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    for day in DAYS:
+        if schedule[day]:
+            schedule[day].sort(key=lambda x: x["time"])
+            text += f"*{day}:*\n"
+            for s in schedule[day]:
+                text += f"  • {s['name']} ({s['time']}, {s['room']})\n"
+            text += "\n"
+
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+
+async def show_delete_menu(query, user_id):
+    user_data = get_user_data(user_id)
+    if not user_data["subjects"]:
+        await query.edit_message_text("❌ O'chirish uchun dars yo'q!", reply_markup=get_main_keyboard())
+        return
+
+    keyboard = []
+    for i, s in enumerate(user_data["subjects"]):
+        text = f"{s['name']} ({s['day']} {s['time']})"
+        keyboard.append([InlineKeyboardButton(text, callback_data=f"del_{i}")])
+    keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="back")])
+
+    await query.edit_message_text(
+        "🗑️ *O'chirish uchun darsni tanlang:*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def delete_subject(query, user_id, data):
+    idx = int(data.split("_")[1])
+    user_data = get_user_data(user_id)
+    if 0 <= idx < len(user_data["subjects"]):
+        deleted = user_data["subjects"].pop(idx)
+        update_user_data(user_id, user_data)
+        await query.edit_message_text(
+            f"✅ *{deleted['name']}* o'chirildi!",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard(),
+        )
+
+
+async def show_exams(query, user_id):
+    user_data = get_user_data(user_id)
+    exams = user_data.get("exams", [])
+
+    keyboard = [[InlineKeyboardButton("➕ Imtihon qo'shish", callback_data="add_exam")]]
+    if exams:
+        keyboard.append([InlineKeyboardButton("🗑️ O'chirish", callback_data="del_exam")])
+    keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="back")])
+
+    if not exams:
+        text = "📖 *IMTIHONLAR*\n\n❌ Hali imtihon yo'q"
+    else:
+        text = "📖 *IMTIHONLAR*\n{'═' * 20}\n\n"
+        exams.sort(key=lambda x: x["date"])
+        for i, e in enumerate(exams, 1):
+            exam_date = datetime.strptime(e["date"], "%Y-%m-%d")
+            days = (exam_date - datetime.now()).days
+            status = "🔴 BUGUN!" if days == 0 else f"{'🟡' if days <= 3 else '🟢'} {days} kun"
+            text += f"*{i}. {e['name']}*\n📅 {e['date']} {e.get('time', '')}\n{status}\n\n"
+
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def toggle_reminders(query, user_id):
+    user_data = get_user_data(user_id)
+    user_data["reminders"] = not user_data.get("reminders", True)
+    update_user_data(user_id, user_data)
+    status = "✅ YOQILDI" if user_data["reminders"] else "❌ O'CHIRILDI"
+    await query.edit_message_text(
+        f"🔔 Eslatmalar {status}",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(),
+    )
+
+
+# ========== CONVERSATION: DARS QO'SHISH ==========
+async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["name"] = update.message.text
+    keyboard = [[InlineKeyboardButton(day, callback_data=f"day_{i}")] for i, day in enumerate(DAYS)]
+    await update.message.reply_text(
+        "📅 *Hafta kunini tanlang:*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return ADD_DAY
+
+
+async def add_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    time_str = update.message.text
+    try:
+        datetime.strptime(time_str, "%H:%M")
+    except ValueError:
+        await update.message.reply_text("❌ Noto'g'ri format! Qayta: `HH:MM`", parse_mode="Markdown")
+        return ADD_TIME
+
+    context.user_data["time"] = time_str
+    await update.message.reply_text("🏫 *Xona raqamini kiriting:*", parse_mode="Markdown")
+    return ADD_ROOM
+
+
+async def add_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["room"] = update.message.text
+    await update.message.reply_text("👤 *O'qituvchi F.I.Sh:*", parse_mode="Markdown")
+    return ADD_TEACHER
+
+
+async def add_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_data = get_user_data(user_id)
+
+    new_subject = {
+        "name": context.user_data["name"],
+        "day": context.user_data["day"],
+        "time": context.user_data["time"],
+        "room": context.user_data["room"],
+        "teacher": update.message.text,
+    }
+
+    user_data["subjects"].append(new_subject)
+    update_user_data(user_id, user_data)
+
+    await update.message.reply_text(
+        f"✅ *Dars qo'shildi!*\n\n📖 {new_subject['name']}\n📅 {new_subject['day']} {new_subject['time']}\n🏫 {new_subject['room']}\n👤 {new_subject['teacher']}",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(),
+    )
+    return ConversationHandler.END
+
+
+# ========== CONVERSATION: IMTIHON QO'SHISH ==========
+async def add_exam_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["exam_name"] = update.message.text
+    await update.message.reply_text(
+        "📅 *Sana:* `YYYY-MM-DD` formatida\n(Masalan: 2026-06-15)",
+        parse_mode="Markdown",
+    )
+    return ADD_EXAM_DATE
+
+
+async def add_exam_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    date_str = update.message.text
+    try:
+        exam_date = datetime.strptime(date_str, "%Y-%m-%d")
+        if exam_date < datetime.now():
+            await update.message.reply_text("❌ O'tgan sana! Qayta kiriting:")
+            return ADD_EXAM_DATE
+    except ValueError:
+        await update.message.reply_text("❌ Noto'g'ri format! `YYYY-MM-DD`")
+        return ADD_EXAM_DATE
+
+    context.user_data["exam_date"] = date_str
+    await update.message.reply_text(
+        "🕐 *Vaqt:* `HH:MM` yoki `/skip`",
+        parse_mode="Markdown",
+    )
+    return ADD_EXAM_TIME
+
+
+async def add_exam_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    time_str = update.message.text
+    user_id = update.effective_user.id
+    user_data = get_user_data(user_id)
+
+    if time_str != "/skip":
+        try:
+            datetime.strptime(time_str, "%H:%M")
+        except ValueError:
+            await update.message.reply_text("❌ Noto'g'ri! `HH:MM` yoki `/skip`")
+            return ADD_EXAM_TIME
+
+    user_data.setdefault("exams", []).append({
+        "name": context.user_data["exam_name"],
+        "date": context.user_data["exam_date"],
+        "time": time_str if time_str != "/skip" else "",
+        "room": "",
+    })
+    update_user_data(user_id, user_data)
+
+    await update.message.reply_text(
+        "✅ *Imtihon qo'shildi!*",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(),
+    )
+    return ConversationHandler.END
+
+
+# ========== ESLATMALAR ==========
+async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now()
+    current_time = now.strftime("%H:%M")
+    current_day = DAYS[now.weekday()]
+
+    data = load_data()
+    for uid, udata in data.items():
+        if not udata.get("reminders", True):
+            continue
+        for subject in udata.get("subjects", []):
+            if subject["day"] != current_day:
+                continue
+            subj_time = datetime.strptime(subject["time"], "%H:%M")
+            reminder = (subj_time - timedelta(minutes=15)).strftime("%H:%M")
+            if current_time == reminder:
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(uid),
+                        text=(
+                            f"⏰ *DARS ESIGIZDA!*\n\n"
+                            f"📖 {subject['name']}\n"
+                            f"🕐 {subject['time']} | 🏫 {subject['room']}\n"
+                            f"👤 {subject['teacher']}\n\n"
+                            f"Omad! 💪"
+                        ),
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.error(f"Eslatma xatosi: {e}")
+
+
+# ========== ASOSIY ==========
+def main():
+    application = Application.builder().token(TOKEN).build()
+
+    # Dars qo'shish
+    add_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler, pattern="^add_subject$")],
+        states={
+            ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
+            ADD_DAY: [CallbackQueryHandler(button_handler, pattern="^day_")],
+            ADD_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_time)],
+            ADD_ROOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_room)],
+            ADD_TEACHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_teacher)],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Bekor qilindi!", reply_markup=get_main_keyboard()))],
+    )
+
+    # Imtihon qo'shish
+    exam_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler, pattern="^add_exam$")],
+        states={
+            ADD_EXAM_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_exam_name)],
+            ADD_EXAM_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_exam_date)],
+            ADD_EXAM_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_exam_time)],
+        },
+        fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Bekor qilindi!", reply_markup=get_main_keyboard()))],
+    )
+
+    # Asosiy handlerlar
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(add_handler)
+    application.add_handler(exam_handler)
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(today|week|del_subject|exams|reminders|back|del_\\d+)$"))
+
+    # Eslatma (har daqiqa)
+    application.job_queue.run_repeating(check_reminders, interval=60, first=10)
+
+    application.run_polling()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
