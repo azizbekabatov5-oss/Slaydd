@@ -19,14 +19,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 🔑 TOKEN - Environment Variable dan olinadi
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN topilmadi! Environment Variable sozlang.")
 
 DATA_FILE = "bot_data.json"
 
-# Conversation holatlari
 ADD_NAME, ADD_DAY, ADD_TIME, ADD_ROOM, ADD_TEACHER = range(5)
 ADD_EXAM_NAME, ADD_EXAM_DATE, ADD_EXAM_TIME = range(5, 8)
 
@@ -72,7 +70,7 @@ def get_main_keyboard():
     ])
 
 
-# ========== ASOSIY MENYU ==========
+# ========== START ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = (
@@ -88,8 +86,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
-# ========== TUGMALAR HANDLERI (CONVERSATION TASHQARIDA) ==========
-async def today_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== TUGMA HANDLERLARI ==========
+async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -108,7 +106,7 @@ async def today_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
-async def week_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def week_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -158,7 +156,7 @@ async def del_subject_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def delete_subject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delete_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -175,7 +173,7 @@ async def delete_subject_callback(update: Update, context: ContextTypes.DEFAULT_
         )
 
 
-async def exams_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def exams_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -201,7 +199,7 @@ async def exams_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def reminders_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reminders_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -216,7 +214,7 @@ async def reminders_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
-async def back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Quyidagi menyudan tanlang 👇", reply_markup=get_main_keyboard())
@@ -401,16 +399,16 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(TOKEN).build()
 
-    # 1. Oddiy tugmalar (CONVERSION TASHQARIDA)
-    application.add_handler(CallbackQueryHandler(today_callback, pattern="^today$"))
-    application.add_handler(CallbackQueryHandler(week_callback, pattern="^week$"))
+    # 1. Oddiy tugmalar (CONVERSATION TASHQARIDA va UNDAN OLDIN)
+    application.add_handler(CallbackQueryHandler(today_handler, pattern="^today$"))
+    application.add_handler(CallbackQueryHandler(week_handler, pattern="^week$"))
     application.add_handler(CallbackQueryHandler(del_subject_menu, pattern="^del_subject$"))
-    application.add_handler(CallbackQueryHandler(delete_subject_callback, pattern="^del_\\d+$"))
-    application.add_handler(CallbackQueryHandler(exams_callback, pattern="^exams$"))
-    application.add_handler(CallbackQueryHandler(reminders_callback, pattern="^reminders$"))
-    application.add_handler(CallbackQueryHandler(back_callback, pattern="^back$"))
+    application.add_handler(CallbackQueryHandler(delete_subject, pattern="^del_\\d+$"))
+    application.add_handler(CallbackQueryHandler(exams_handler, pattern="^exams$"))
+    application.add_handler(CallbackQueryHandler(reminders_handler, pattern="^reminders$"))
+    application.add_handler(CallbackQueryHandler(back_handler, pattern="^back$"))
 
-    # 2. Conversation handlerlar (oddiy handlerlardan KEYIN)
+    # 2. Conversation handlerlar
     add_subject_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_subject_start, pattern="^add_subject$")],
         states={
@@ -447,3 +445,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
