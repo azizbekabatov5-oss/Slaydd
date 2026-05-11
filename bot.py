@@ -38,18 +38,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile = instaloader.Profile.from_username(L.context, username)
 
         has_pic = bool(profile.profile_pic_url)
+        
+        yoq = "Yoq"
+        ism = profile.full_name if profile.full_name else yoq
+        bio = profile.biography if profile.biography else yoq
 
         text_response = (
-            f"📊 *Profil ma'lumotlari:*\n\n"
+            f"📊 *Profil malumotlari:*\n\n"
             f"👤 *Username:* @{profile.username}\n"
-            f"📛 *Ism:* {profile.full_name or 'Yo\\'q'}\n"
-            f"📝 *Bio:* {profile.biography or 'Yo\\'q'}\n\n"
+            f"📛 *Ism:* {ism}\n"
+            f"📝 *Bio:* {bio}\n\n"
             f"👥 *Obunachilar:* {profile.followers:,}\n"
             f"➡️ *Obunalar:* {profile.followees:,}\n"
             f"📸 *Postlar:* {profile.mediacount:,}\n\n"
             f"🔓 *Profil:* {'Ochiq ✅' if not profile.is_private else 'Yopiq 🔒'}\n"
-            f"✔️ *Tasdiqlangan:* {'Ha ✅' if profile.is_verified else 'Yo\\'q'}\n"
-            f"🖼 *Profil rasmi:* {'Bor ✅' if has_pic else 'Yo\\'q ❌'}"
+            f"✔️ *Tasdiqlangan:* {'Ha ✅' if profile.is_verified else yoq}\n"
+            f"🖼 *Profil rasmi:* {'Bor ✅' if has_pic else yoq}"
         )
 
         await msg.delete()
@@ -66,7 +70,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except instaloader.exceptions.ProfileNotExistsException:
         await msg.edit_text("❌ Profil topilmadi.")
     except instaloader.exceptions.ConnectionException:
-        await msg.edit_text("⚠️ Instagram cheklov qo'ydi. Keyinroq urinib ko'ring.")
+        await msg.edit_text("⚠️ Instagram cheklov qoydi. Keyinroq urinib koring.")
     except Exception as e:
         await msg.edit_text(f"❌ Xatolik: {str(e)}")
 
