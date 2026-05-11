@@ -10,7 +10,7 @@ L = instaloader.Instaloader()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Salom! 👋\nInstagram profil URL yuboring.\n\nMisol: https://www.instagram.com/username/"
+        "Salom! Instagram profil URL yuboring.\n\nMisol: https://www.instagram.com/username/"
     )
 
 def extract_username(url: str):
@@ -71,13 +71,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await msg.edit_text(f"Xatolik: {str(e)}")
 
-async def main():
+def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Bot ishga tushdi...")
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    main()
